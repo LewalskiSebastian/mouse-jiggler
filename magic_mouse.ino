@@ -10,49 +10,62 @@
 #define ESCAPE 0x1B
 #define DELETE 0x7F   // Putty send "Delete" as "Backspace"
 #define EEPROM_INIT 0x54  // Value set in EEPROM_INIT_ADDRESS after first turn on
+#define MAX_LONG 2147483647 // Max long variable value
 
 #define EEPROM_INIT_ADDRESS 0
 #define EEPROM_TIME_ADDRESS 1
 #define EEPROM_INTENSITY_ADDRESS 5
-
+#define EEPROM_SPEED_ADDRESS 9
+#define EEPROM_RIGHT_ADDRESS 13
 
 byte incomingByte = 0; // for incoming serial data
 char incomingBytes[10]; // ASCII bytes incoming on UART
 byte incomingBytesTop = 0;  // "Pointer" to the end of incomingBytes
 long time_val = 60; // Default time value
 long intensity_val = 10;  // Default intensity value
+long speed_val = 30;  // Default speed value
+bool is_right = true;  // Default movement direction
 long counted_seconds = 0;
+unsigned int counted_impulses = 0;
 bool is_move = false;
-
-bool lol = false;
 
 typedef enum
 {
   MENU,
   TIME,
   INTENSITY,
+  SPEEDO, // Cannot be just SPEED :/
 } uartState_t;
 
 static uartState_t uartState  = MENU;
 
-const char uartHello[] = "Type 1 to do change time\r\nType 2 to do change intensity\r\nType 3 to show time\r\nType 4 to show intensity\r\n";
+const char uartHello[] = "Type 1 to do change time\r\nType 2 to do change intensity\r\nType 3 to do change speed\r\nType 4 to do change direction\r\nType 5 to show values\r\n";
 const char uartError[] = "Incorrect value\r\n";
-const char intensitySelectedMsg[] = "Intensity selected [radius in px]\r\n";
+const char intensitySelectedMsg[] = "Intensity selected [px]\r\n";
 const char timeSelectedMsg[] = "Time selected [s]\r\n";
+const char speedSelectedMsg[] = "Speed selected\r\n";
 const char timeSetMsg[] = "Time set to ";
 const char intensitySetMsg[] = "Intensity set to ";
+const char speedSetMsg[] = "Speed set to ";
+const char directionSetMsg[] = "Direction set to ";
 const char secMsg[] = " s\r\n";
 const char pxMsg[] = " px\r\n";
+const char rightMsg[] = " right\r\n";
+const char leftMsg[] = " left\r\n";
 
 void load_settings(){
   if (EEPROM.read(EEPROM_INIT_ADDRESS) == EEPROM_INIT) {
     time_val = EEPROM.read(EEPROM_TIME_ADDRESS);
     intensity_val = EEPROM.read(EEPROM_INTENSITY_ADDRESS);
+    speed_val = EEPROM.read(EEPROM_SPEED_ADDRESS);
+    is_right = EEPROM.read(EEPROM_RIGHT_ADDRESS);
   }
   else 
   {
     EEPROM.write(EEPROM_TIME_ADDRESS, time_val);
     EEPROM.write(EEPROM_INTENSITY_ADDRESS, intensity_val);
+    EEPROM.write(EEPROM_SPEED_ADDRESS, speed_val);
+    EEPROM.write(EEPROM_RIGHT_ADDRESS, is_right);
     EEPROM.write(EEPROM_INIT_ADDRESS, EEPROM_INIT);
   }
 }
@@ -79,28 +92,53 @@ long read_value() {
 void menu() {
   switch (incomingByte)
   {
-    case '1':
+    case '1':   // Chagne time choosen
       uartState = TIME;
       Serial.print(timeSelectedMsg);
       break;
-    case '2':
+    case '2':   // Chagne intensity choosen
       uartState = INTENSITY;
       Serial.print(intensitySelectedMsg);
       break;
-    case '3':
+    case '3':   // Chagne speed choosen
+      uartState = SPEEDO;
+      Serial.print(speedSelectedMsg);
+      break;
+    case '4':   // Chagne direction choosen
+      Serial.print(directionSetMsg);
+      is_right = !is_right;
+      if (is_right) {
+        Serial.print(rightMsg);
+      }
+      else
+      {
+        Serial.print(leftMsg);
+      }
+      EEPROM.write(EEPROM_RIGHT_ADDRESS, is_right);
+      Serial.print(uartHello);
+      break;
+    case '5':   // Show values choosen
+      Serial.print(timeSetMsg);
       Serial.print(time_val);
       Serial.print(secMsg);
-      Serial.print(uartHello);
-      break;
-    case '4':
+      Serial.print(intensitySetMsg);
       Serial.print(intensity_val);
       Serial.print(pxMsg);
+      Serial.print(speedSetMsg);
+      Serial.println(speed_val);
+      Serial.print(directionSetMsg);
+      if (is_right) {
+        Serial.print(rightMsg);
+      }
+      else
+      {
+        Serial.print(leftMsg);
+      }
+      break;
+    case CARRIGE_RETURN:  // Enter pressed
       Serial.print(uartHello);
       break;
-    case CARRIGE_RETURN:
-      Serial.print(uartHello);
-      break;
-    case LINE_FEED:
+    case LINE_FEED:       // Enter pressed
       Serial.print(uartHello);
       break;
     default:
@@ -116,6 +154,7 @@ void read_change_time() {
   Serial.print(uartHello);
   uartState = MENU;
   EEPROM.write(EEPROM_TIME_ADDRESS, time_val);
+  counted_seconds = 0;
 }
 
 void read_change_intensity() {
@@ -126,6 +165,15 @@ void read_change_intensity() {
   Serial.print(uartHello);
   uartState = MENU;
   EEPROM.write(EEPROM_INTENSITY_ADDRESS, intensity_val);
+}
+
+void read_change_speed() {
+  speed_val = read_value();
+  Serial.print(speedSetMsg);
+  Serial.println(speed_val);
+  Serial.print(uartHello);
+  uartState = MENU;
+  EEPROM.write(EEPROM_SPEED_ADDRESS, speed_val);
 }
 
 void read_line() {
@@ -142,6 +190,10 @@ void read_line() {
 
       case INTENSITY:
         read_change_intensity();
+        break;
+
+      case SPEEDO:
+        read_change_speed();
         break;
       
       default:
@@ -175,7 +227,15 @@ void uart_service() {
 }
 
 void move_mouse() {
-  Mouse.move(1, 1, 0);
+  double s = sin(counted_impulses*2*PI/speed_val);
+  double c = cos(counted_impulses*2*PI/speed_val);
+  if (is_right) {
+    Mouse.move(intensity_val*c, intensity_val*s, 0);
+  }
+  else 
+  {
+    Mouse.move(intensity_val*s, intensity_val*c, 0);
+  }
 }
 
 void set_timer1() {
@@ -217,7 +277,6 @@ void loop() {
   uart_service();
   if (counted_seconds > time_val) {
     is_move = true;
-    counted_seconds = time_val;
   } else {
     is_move = false;
   }
@@ -226,11 +285,15 @@ void loop() {
 ISR(TIMER1_COMPA_vect)  // Przerwanie timera0 (porównanie rejestrów)
 {
   counted_seconds++;
+  if (counted_seconds < 0) {
+    counted_seconds = MAX_LONG;
+  }
 }
 
 ISR(TIMER3_COMPA_vect)  // Przerwanie timera0 (porównanie rejestrów)
 {
   if (is_move) {
+    counted_impulses = ++counted_impulses%speed_val;
     move_mouse();
   }
 }
