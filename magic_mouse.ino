@@ -2,6 +2,7 @@
 #include <avr/io.h> 
 #include <Mouse.h>
 #include <EEPROM.h>
+#include <PS2Mouse.h>
 
 #define USART_BAUDRATE 9600
 #define CARRIGE_RETURN 0x0D
@@ -11,6 +12,12 @@
 #define DELETE 0x7F   // Putty send "Delete" as "Backspace"
 #define EEPROM_INIT 0x54  // Value set in EEPROM_INIT_ADDRESS after first turn on
 #define MAX_LONG 2147483647 // Max long variable value
+
+#define PS2_MOUSE_CLOCK   2   // niebieski kabel - green na pcb
+#define PS2_MOUSE_DATA    4   // pomarańczowy kabel - white na pcb
+#define PS2_LEFT 0x1
+#define PS2_RIGHT 0x2
+#define PS2_MIDDLE 0x4
 
 #define EEPROM_INIT_ADDRESS 0
 #define EEPROM_TIME_ADDRESS 1
@@ -28,6 +35,10 @@ bool is_right = true;  // Default movement direction
 long counted_seconds = 0;
 unsigned int counted_impulses = 0;
 bool is_move = false;
+
+bool prev_ps2_left = false;
+bool prev_ps2_right = false;
+bool prev_ps2_middle = false;
 
 typedef enum
 {
@@ -52,6 +63,8 @@ const char secMsg[] = " s\r\n";
 const char pxMsg[] = " px\r\n";
 const char rightMsg[] = " right\r\n";
 const char leftMsg[] = " left\r\n";
+
+PS2Mouse mouse( PS2_MOUSE_CLOCK, PS2_MOUSE_DATA, STREAM );  // Class from PS2Mouse for reading PS/2 mouse data
 
 void load_settings(){
   if (EEPROM.read(EEPROM_INIT_ADDRESS) == EEPROM_INIT) {
@@ -238,6 +251,60 @@ void move_mouse() {
   }
 }
 
+void read_ps2() {
+  int8_t data[3];
+  mouse.report(data);
+
+  
+  int x_status = data[1];
+  int y_status = -data[2];
+  int z_status = data[3];
+
+  if (data[0] & PS2_LEFT){
+    counted_seconds = 0;
+    if (!prev_ps2_left) {
+      Mouse.press(MOUSE_LEFT);
+      prev_ps2_left = true;
+    }
+  } else {
+    if (prev_ps2_left) {
+      Mouse.release(MOUSE_LEFT);
+      prev_ps2_left = false;
+    }
+  }
+
+  if (data[0] & PS2_RIGHT){
+    counted_seconds = 0;
+    if (!prev_ps2_right) {
+      Mouse.press(MOUSE_RIGHT);
+      prev_ps2_right = true;
+    }
+  } else {
+    if (prev_ps2_right) {
+      Mouse.release(MOUSE_RIGHT);
+      prev_ps2_right = false;
+    }
+  }
+
+  if (data[0] & PS2_MIDDLE){
+    counted_seconds = 0;
+    if (!prev_ps2_middle) {
+      Mouse.press(MOUSE_MIDDLE);
+      prev_ps2_middle = true;
+    }
+  } else {
+    if (prev_ps2_middle) {
+      Mouse.release(MOUSE_MIDDLE);
+      prev_ps2_middle = false;
+    }
+  }
+
+  if (x_status != 0 || y_status != 0 || z_status != 0) {
+    counted_seconds = 0;
+    Mouse.move(x_status, y_status, z_status);
+  }
+}
+
 void set_timer1() {
   TCCR1A = 0;
   TCCR1B = 0;
@@ -266,6 +333,11 @@ void setup() {
   load_settings();
   clear_incoming_bytes();
   Serial.begin(USART_BAUDRATE);
+  mouse.initialize();
+  mouse.set_sample_rate( 200 );
+  mouse.set_sample_rate( 100 );
+  mouse.set_sample_rate( 80 );
+  mouse.set_scaling_1_1();
   noInterrupts();
   set_timer1();
   set_timer3();
@@ -275,6 +347,7 @@ void setup() {
 void loop() {
   // put your main code here, to run repeatedly:
   uart_service();
+  read_ps2();
   if (counted_seconds > time_val) {
     is_move = true;
   } else {
@@ -282,7 +355,7 @@ void loop() {
   }
 }
 
-ISR(TIMER1_COMPA_vect)  // Przerwanie timera0 (porównanie rejestrów)
+ISR(TIMER1_COMPA_vect)  // Przerwanie timera1 (porównanie rejestrów)
 {
   counted_seconds++;
   if (counted_seconds < 0) {
@@ -290,7 +363,7 @@ ISR(TIMER1_COMPA_vect)  // Przerwanie timera0 (porównanie rejestrów)
   }
 }
 
-ISR(TIMER3_COMPA_vect)  // Przerwanie timera0 (porównanie rejestrów)
+ISR(TIMER3_COMPA_vect)  // Przerwanie timera3 (porównanie rejestrów)
 {
   if (is_move) {
     counted_impulses = ++counted_impulses%speed_val;
