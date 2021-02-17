@@ -10,7 +10,7 @@
 #define BACKSPACE 0x08
 #define ESCAPE 0x1B
 #define DELETE 0x7F   // Putty send "Delete" as "Backspace"
-#define EEPROM_INIT 0x54  // Value set in EEPROM_INIT_ADDRESS after first turn on
+#define EEPROM_INIT 0x55  // Value set in EEPROM_INIT_ADDRESS after first turn on
 #define MAX_LONG 2147483647 // Max long variable value
 
 #define PS2_MOUSE_CLOCK   2   // niebieski kabel - green na pcb
@@ -24,6 +24,9 @@
 #define EEPROM_INTENSITY_ADDRESS 5
 #define EEPROM_SPEED_ADDRESS 9
 #define EEPROM_RIGHT_ADDRESS 13
+#define EEPROM_XSCALE_ADDRESS 17
+#define EEPROM_YSCALE_ADDRESS 21
+#define EEPROM_ZSCALE_ADDRESS 25
 
 byte incomingByte = 0; // for incoming serial data
 char incomingBytes[10]; // ASCII bytes incoming on UART
@@ -32,6 +35,9 @@ long time_val = 60; // Default time value
 long intensity_val = 10;  // Default intensity value
 long speed_val = 30;  // Default speed value
 bool is_right = true;  // Default movement direction
+int x_scale = 2;  // Default x scale
+int y_scale = 2;  // Default y scale
+int z_scale = 1;  // Default z scale
 long counted_seconds = 0;
 unsigned int counted_impulses = 0;
 bool is_move = false;
@@ -46,23 +52,32 @@ typedef enum
   TIME,
   INTENSITY,
   SPEEDO, // Cannot be just SPEED :/
+  HSCALE,
+  VSCALE,
+  WSCALE,
 } uartState_t;
 
 static uartState_t uartState  = MENU;
 
-const char uartHello[] = "Type 1 to do change time\r\nType 2 to do change intensity\r\nType 3 to do change speed\r\nType 4 to do change direction\r\nType 5 to show values\r\n";
+const char uartHello[] = "Type 1 to do change time\r\nType 2 to do change intensity\r\nType 3 to do change speed\r\nType 4 to do change direction\r\nType 5 to do change horizontal scale\r\nType 6 to do change vertical scale\r\nType 7 to do change wheel scale\r\nType 8 to show values\r\n";
 const char uartError[] = "Incorrect value\r\n";
 const char intensitySelectedMsg[] = "Intensity selected [px]\r\n";
 const char timeSelectedMsg[] = "Time selected [s]\r\n";
 const char speedSelectedMsg[] = "Speed selected\r\n";
+const char hscaleSelectedMsg[] = "Horizontal scale selected\r\n";
+const char vscaleSelectedMsg[] = "Vertical scale selected\r\n";
+const char wscaleSelectedMsg[] = "Wheel scale selected\r\n";
 const char timeSetMsg[] = "Time set to ";
 const char intensitySetMsg[] = "Intensity set to ";
 const char speedSetMsg[] = "Speed set to ";
 const char directionSetMsg[] = "Direction set to ";
+const char hscaleSetMsg[] = "Horizontal scale set to ";
+const char vscaleSetMsg[] = "Vertical scale set to ";
+const char wscaleSetMsg[] = "Wheel scale set to ";
 const char secMsg[] = " s\r\n";
 const char pxMsg[] = " px\r\n";
-const char rightMsg[] = " right\r\n";
-const char leftMsg[] = " left\r\n";
+const char rightMsg[] = "right\r\n";
+const char leftMsg[] = "left\r\n";
 
 PS2Mouse mouse( PS2_MOUSE_CLOCK, PS2_MOUSE_DATA, STREAM );  // Class from PS2Mouse for reading PS/2 mouse data
 
@@ -72,6 +87,9 @@ void load_settings(){
     intensity_val = EEPROM.read(EEPROM_INTENSITY_ADDRESS);
     speed_val = EEPROM.read(EEPROM_SPEED_ADDRESS);
     is_right = EEPROM.read(EEPROM_RIGHT_ADDRESS);
+    x_scale = EEPROM.read(EEPROM_XSCALE_ADDRESS);
+    y_scale = EEPROM.read(EEPROM_YSCALE_ADDRESS);
+    z_scale = EEPROM.read(EEPROM_ZSCALE_ADDRESS);
   }
   else 
   {
@@ -79,6 +97,9 @@ void load_settings(){
     EEPROM.write(EEPROM_INTENSITY_ADDRESS, intensity_val);
     EEPROM.write(EEPROM_SPEED_ADDRESS, speed_val);
     EEPROM.write(EEPROM_RIGHT_ADDRESS, is_right);
+    EEPROM.write(EEPROM_XSCALE_ADDRESS, x_scale);
+    EEPROM.write(EEPROM_YSCALE_ADDRESS, y_scale);
+    EEPROM.write(EEPROM_ZSCALE_ADDRESS, z_scale);
     EEPROM.write(EEPROM_INIT_ADDRESS, EEPROM_INIT);
   }
 }
@@ -130,7 +151,19 @@ void menu() {
       EEPROM.write(EEPROM_RIGHT_ADDRESS, is_right);
       Serial.print(uartHello);
       break;
-    case '5':   // Show values choosen
+    case '5':   // Chagne horizontal scale choosen
+      uartState = HSCALE;
+      Serial.print(hscaleSelectedMsg);
+      break;
+    case '6':   // Chagne vertical scale choosen
+      uartState = VSCALE;
+      Serial.print(vscaleSelectedMsg);
+      break;
+    case '7':   // Chagne wheel scale choosen
+      uartState = WSCALE;
+      Serial.print(wscaleSelectedMsg);
+      break;
+    case '8':   // Show values choosen
       Serial.print(timeSetMsg);
       Serial.print(time_val);
       Serial.print(secMsg);
@@ -147,6 +180,12 @@ void menu() {
       {
         Serial.print(leftMsg);
       }
+      Serial.print(hscaleSetMsg);
+      Serial.println(x_scale);
+      Serial.print(vscaleSetMsg);
+      Serial.println(y_scale);
+      Serial.print(wscaleSetMsg);
+      Serial.println(z_scale);
       break;
     case CARRIGE_RETURN:  // Enter pressed
       Serial.print(uartHello);
@@ -189,6 +228,33 @@ void read_change_speed() {
   EEPROM.write(EEPROM_SPEED_ADDRESS, speed_val);
 }
 
+void read_change_hscale() {
+  x_scale = read_value();
+  Serial.print(hscaleSetMsg);
+  Serial.println(x_scale);
+  Serial.print(uartHello);
+  uartState = MENU;
+  EEPROM.write(EEPROM_XSCALE_ADDRESS, x_scale);
+}
+
+void read_change_vscale() {
+  y_scale = read_value();
+  Serial.print(vscaleSetMsg);
+  Serial.println(y_scale);
+  Serial.print(uartHello);
+  uartState = MENU;
+  EEPROM.write(EEPROM_YSCALE_ADDRESS, y_scale);
+}
+
+void read_change_wscale() {
+  z_scale = read_value();
+  Serial.print(wscaleSetMsg);
+  Serial.println(z_scale);
+  Serial.print(uartHello);
+  uartState = MENU;
+  EEPROM.write(EEPROM_ZSCALE_ADDRESS, z_scale);
+}
+
 void read_line() {
   if (incomingBytesTop == 0) {  // Empty Line
     Serial.print(uartError);
@@ -207,6 +273,18 @@ void read_line() {
 
       case SPEEDO:
         read_change_speed();
+        break;
+
+      case HSCALE:
+        read_change_hscale();
+        break;
+
+      case VSCALE:
+        read_change_vscale();
+        break;
+
+      case WSCALE:
+        read_change_wscale();
         break;
       
       default:
@@ -256,50 +334,54 @@ void read_ps2() {
   mouse.report(data);
 
   
-  int x_status = data[1];
-  int y_status = -data[2];
-  int z_status = data[3];
+  int x_status = data[1]*x_scale;
+  int y_status = -data[2]*y_scale;
+  int z_status = -data[3]*z_scale;
 
   if (data[0] & PS2_LEFT){
-    counted_seconds = 0;
     if (!prev_ps2_left) {
+      counted_seconds = 0;
       Mouse.press(MOUSE_LEFT);
       prev_ps2_left = true;
     }
   } else {
     if (prev_ps2_left) {
+      counted_seconds = 0;
       Mouse.release(MOUSE_LEFT);
       prev_ps2_left = false;
     }
   }
 
   if (data[0] & PS2_RIGHT){
-    counted_seconds = 0;
     if (!prev_ps2_right) {
+      counted_seconds = 0;
       Mouse.press(MOUSE_RIGHT);
       prev_ps2_right = true;
     }
   } else {
     if (prev_ps2_right) {
+      counted_seconds = 0;
       Mouse.release(MOUSE_RIGHT);
       prev_ps2_right = false;
     }
   }
 
   if (data[0] & PS2_MIDDLE){
-    counted_seconds = 0;
     if (!prev_ps2_middle) {
+      counted_seconds = 0;
       Mouse.press(MOUSE_MIDDLE);
       prev_ps2_middle = true;
     }
   } else {
     if (prev_ps2_middle) {
+      counted_seconds = 0;
       Mouse.release(MOUSE_MIDDLE);
       prev_ps2_middle = false;
     }
   }
 
   if (x_status != 0 || y_status != 0 || z_status != 0) {
+    if (is_move) z_status = 0;
     counted_seconds = 0;
     Mouse.move(x_status, y_status, z_status);
   }
@@ -334,9 +416,9 @@ void setup() {
   clear_incoming_bytes();
   Serial.begin(USART_BAUDRATE);
   mouse.initialize();
-  mouse.set_sample_rate( 200 );
-  mouse.set_sample_rate( 100 );
-  mouse.set_sample_rate( 80 );
+  mouse.set_sample_rate(200);
+  mouse.set_sample_rate(100);
+  mouse.set_sample_rate(80);
   mouse.set_scaling_1_1();
   noInterrupts();
   set_timer1();
@@ -355,7 +437,7 @@ void loop() {
   }
 }
 
-ISR(TIMER1_COMPA_vect)  // Przerwanie timera1 (porównanie rejestrów)
+ISR(TIMER1_COMPA_vect)  // Timer1 interrupt (register compare)
 {
   counted_seconds++;
   if (counted_seconds < 0) {
@@ -363,7 +445,7 @@ ISR(TIMER1_COMPA_vect)  // Przerwanie timera1 (porównanie rejestrów)
   }
 }
 
-ISR(TIMER3_COMPA_vect)  // Przerwanie timera3 (porównanie rejestrów)
+ISR(TIMER3_COMPA_vect)  // Timer3 interrupt (register compare)
 {
   if (is_move) {
     counted_impulses = ++counted_impulses%speed_val;
